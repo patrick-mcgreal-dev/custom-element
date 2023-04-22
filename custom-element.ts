@@ -115,6 +115,11 @@ export class CustomElement extends HTMLElement {
 
   protected keydown = (e: KeyboardEvent) : boolean => {
 
+    if (this.keyspressed.length > 3) {
+      this.keyspressed = [];
+      return false;
+    }
+
     if (this.modkeys.includes(e.key)) {
       this.keyspressed = [ `mod-${e.key}` ];
       return false;
