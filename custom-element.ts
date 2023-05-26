@@ -15,9 +15,10 @@ export class CustomElement extends HTMLElement {
   protected modelStructure: any;
   protected modelSetters: { [key: string]: Function } = {};
 
+  protected actions: { [key: string]: (data: any) => void } = {};
+
   protected modkeys: string[] = [];
   protected controls: { [key: string]: string } = {};
-  protected actions: { [key: string]: (key: string) => void } = {};
   protected controlElementSelectors: string[] = [];
   protected keyspressed: string[] = [];
 
@@ -33,11 +34,6 @@ export class CustomElement extends HTMLElement {
   // MODEL FUNCTIONS
 
   protected useAttributes() {
-    for (let attribute of this.attributes) {
-      const modelProp = this.modelStructure.properties[attribute.name];
-      if (!modelProp) continue;
-      this.setModelValue(attribute.name, cast[modelProp.type](attribute.value));
-    }
     const attributeObserver = new MutationObserver((mutationList) => {
       mutationList.forEach((mutation) => {
         const modelProp = this.modelStructure.properties[mutation.attributeName!];
@@ -58,11 +54,15 @@ export class CustomElement extends HTMLElement {
         this.setModelValue(prop, value[prop]);
       }
     }
+    const validModel = {};
     for (const prop in this.modelStructure.properties) {
-      if (this.modelStructure.order?.includes(prop)) continue;
       if (!value.hasOwnProperty(prop)) continue;
       this.setModelValue(prop, value[prop]);
+      validModel[prop] = value[prop];
     }
+    this.model = validModel;
+    const modelSetter = this.modelSetters["model"];
+    if (modelSetter) modelSetter(validModel);
   }
 
   public setModelValue(name: string, value: any) : void {
@@ -71,7 +71,6 @@ export class CustomElement extends HTMLElement {
       this.modelSetters[name](this.model[name], value);
     }
     this.model[name] = value;
-    this.setAttribute(name, value);
   }
 
   private validateProp(name: string, value: any) : void {
@@ -103,49 +102,86 @@ export class CustomElement extends HTMLElement {
     this.shadowRoot?.appendChild(element);
   }
 
+  protected removeElement(selector: string) : void {
+    this.shadowRoot?.removeChild(this.element(selector));
+  }
+
   // CONTROLS
 
+  protected useControls() {
+    if (!this.modelStructure?.properties) {
+      this.modelStructure = { properties: {} };
+    }
+    this.modelStructure.properties["controls"] = { type: "boolean" };
+    this.modelSetters.controls = (oldValue, newValue) => {
+      if (newValue) {
+        window.addEventListener("keydown", this.keydown);
+        window.addEventListener("keyup", this.keyup);
+      } else {
+        window.removeEventListener("keydown", this.keydown);
+        window.removeEventListener("keyup", this.keyup);
+      }
+      if (this.modelStructure.properties.controlsActive) {
+        this.setModelValue("controlsActive", newValue);
+      }
+    };
+  }
+
   protected keyup = (e: KeyboardEvent) => {
-    if (this.modkeys.includes(e.key)) {
-      this.keyspressed = this.keyspressed.filter(k => k != `mod-${e.key}`);
+    if (this.modkeys.includes(e.code)) {
+      this.keyspressed = this.keyspressed.filter(k => k != `mod-${e.code}`);
     } else {
-      this.keyspressed = this.keyspressed.filter(k => k != e.key);
+      this.keyspressed = this.keyspressed.filter(k => k != e.code);
     }
   }
 
-  protected keydown = (e: KeyboardEvent) : boolean => {
+  protected keydown = (e: KeyboardEvent) : void => {
 
     if (this.keyspressed.length > 3) {
       this.keyspressed = [];
-      return false;
+      return;
     }
 
-    if (this.modkeys.includes(e.key)) {
-      this.keyspressed = [ `mod-${e.key}` ];
-      return false;
+    if (this.modkeys.includes(e.code)) {
+      this.keyspressed = [ `mod-${e.code}` ];
+      return;
     }
 
-    this.keyspressed.push(e.key);
+    this.keyspressed.push(e.code);
 
     if (this.keyevent(this.keyspressed.join(" "))) {
       this.keyspressed = this.keyspressed.filter(k => k.includes("mod"));
-      return true;
+      return;
     }
 
     if (this.keyspressed.length > 0) {
-      const keys = this.keyspressed.join(" ");
-      for (let child of this.controlElementSelectors) {
-        if (this.element(child).keyevent(keys)) {
-          this.keyspressed = this.keyspressed.filter(k => k.includes("mod"));
-          return true;
-        }
-      }
+      this.keyspressed = this.delegateChildControls(this.keyspressed, this);
     }
-
-    return false;
 
     // should also reset keyspressed on leaving window
   }
+
+  protected delegateChildControls(keyspressed: string[], element: CustomElement) : string[] {
+
+    const keys = keyspressed.join(" ");
+
+    for (let child of element.controlElementSelectors) {
+
+      const element = this.element(child) as CustomElement;
+
+      if (element.keyevent(keys)) {
+        return keyspressed.filter(k => k.includes("mod"));
+      }
+
+      if (element.controlElementSelectors) {
+        return element.delegateChildControls(keyspressed, element);
+      }
+
+    }
+
+    return keyspressed;
+    
+  };
 
   protected keyevent(keys: string) : boolean {
 
